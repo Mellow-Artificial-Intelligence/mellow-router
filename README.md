@@ -1,6 +1,6 @@
 ## Mellow Router
 
-Minimal LangGraph chatbot with difficulty-based routing and memory.
+LangGraph chatbot with difficulty-based routing and memory.
 
 ### Setup
 
