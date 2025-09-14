@@ -47,6 +47,7 @@ def test_low_medium_high_nodes_call_correct_models(monkeypatch):
             outputs.append(name)
             # Return a message-like dict that the app expects
             return {"role": "assistant", "content": f"ok from {name}"}
+
         return types.SimpleNamespace(invoke=_invoke)
 
     monkeypatch.setattr(appmod, "_llm_low", make_fake_model("low"))

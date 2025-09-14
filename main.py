@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 load_dotenv()
 
+
 class ChatbotState(TypedDict):
     messages: Annotated[list[AnyMessage], add_messages]
     route: str
@@ -62,10 +63,12 @@ def router(state: ChatbotState) -> dict[str, str]:
 
 
 def _llm_reply_with_model(state: ChatbotState, system_instructions: str, model: ChatOpenAI) -> dict:
-    response = model.invoke([
-        {"role": "system", "content": system_instructions},
-        *state["messages"],
-    ])
+    response = model.invoke(
+        [
+            {"role": "system", "content": system_instructions},
+            *state["messages"],
+        ]
+    )
     return {"messages": [response]}
 
 

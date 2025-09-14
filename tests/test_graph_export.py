@@ -39,10 +39,13 @@ def test_save_graph_png_with_kroki(monkeypatch, tmp_path):
     class FakeResponse:
         def __init__(self, data):
             self._data = data
+
         def read(self):
             return self._data
+
         def __enter__(self):
             return self
+
         def __exit__(self, exc_type, exc, tb):
             return False
 
