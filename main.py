@@ -18,22 +18,22 @@ class ChatbotState(TypedDict):
     difficulty: NotRequired[str]
     clarity: NotRequired[str]
     intent: NotRequired[str]
-    risk: NotRequired[str]
+    priority: NotRequired[str]
     notes: NotRequired[list[str]]
 
 
-class DifficultyResult(BaseModel):
+class TriageResult(BaseModel):
     difficulty: Literal["low", "medium", "high"] = Field(
         description="Overall difficulty of the user request"
     )
     clarity: Literal["clear", "vague"] = Field(
         description="Whether the user request is sufficiently specific"
     )
-    intent: Literal["information", "problem_solving", "emotional_support", "other"] = Field(
+    intent: Literal["informational", "problem_solving", "creative", "other"] = Field(
         description="Dominant intent of the user request"
     )
-    risk: Literal["none", "watch", "critical"] = Field(
-        description="Flags if the user expresses acute distress or safety concerns"
+    priority: Literal["normal", "follow_up", "escalate"] = Field(
+        description="Escalation level for additional review"
     )
     reason: str | None = Field(
         default=None, description="Optional brief rationale for the assignment"
@@ -41,7 +41,7 @@ class DifficultyResult(BaseModel):
 
 
 # Classifier (structured output)
-_classifier_chain = ChatOpenAI(model="gpt-5-mini").with_structured_output(DifficultyResult)
+_classifier_chain = ChatOpenAI(model="gpt-5-mini").with_structured_output(TriageResult)
 
 # Response models by difficulty
 _llm_low = ChatOpenAI(model="gpt-5-nano")
@@ -58,11 +58,15 @@ def router(state: ChatbotState) -> dict[str, object]:
             {
                 "role": "system",
                 "content": (
-                    "You are a safety-aware triage assistant for a psychologist-backed chatbot.\n"
-                    "Return JSON with fields: difficulty ∈ {low, medium, high}; clarity ∈ {clear, vague}; intent ∈ {information, problem_solving, emotional_support, other}; risk ∈ {none, watch, critical}.\n"
-                    "Label clarity as 'vague' if more detail is required.\n"
-                    "Use risk='critical' if the user mentions self-harm, harm to others, or acute crisis; use 'watch' for elevated distress.\n"
-                    "Provide an optional reason summarizing your assessment grounded in psychological or scientific cues."
+                    "You are a triage assistant for an advanced LLM router.\n"
+                    "Return JSON with fields: "
+                    "difficulty ∈ {low, medium, high}; clarity ∈ {clear, vague}; "
+                    "intent ∈ {informational, problem_solving, creative, other}; "
+                    "priority ∈ {normal, follow_up, escalate}.\n"
+                    "Label clarity as 'vague' if you need more detail.\n"
+                    "Use priority='escalate' when the request should be reviewed by a human "
+                    "operator.\n"
+                    "Add an optional reason summarizing how you made the decision."
                 ),
             },
             {"role": "user", "content": text},
@@ -77,17 +81,17 @@ def router(state: ChatbotState) -> dict[str, object]:
     intent = getattr(result, "intent", None)
     if intent is None and isinstance(result, dict):
         intent = result.get("intent")
-    risk = getattr(result, "risk", None)
-    if risk is None and isinstance(result, dict):
-        risk = result.get("risk")
+    priority = getattr(result, "priority", None)
+    if priority is None and isinstance(result, dict):
+        priority = result.get("priority")
     if difficulty not in ("low", "medium", "high"):
         difficulty = "medium"
     if clarity not in ("clear", "vague"):
         clarity = "clear"
-    if intent not in ("information", "problem_solving", "emotional_support", "other"):
+    if intent not in ("informational", "problem_solving", "creative", "other"):
         intent = "other"
-    if risk not in ("none", "watch", "critical"):
-        risk = "none"
+    if priority not in ("normal", "follow_up", "escalate"):
+        priority = "normal"
 
     reason = getattr(result, "reason", None)
     if reason is None and isinstance(result, dict):
@@ -96,19 +100,19 @@ def router(state: ChatbotState) -> dict[str, object]:
     notes = list(state.get("notes", []))
     if reason and reason not in notes:
         notes.append(reason)
-    if risk == "watch":
-        watch_note = "Monitor affect; provide supportive resources and normalize emotions."
-        if watch_note not in notes:
-            notes.append(watch_note)
-    if risk == "critical":
-        crisis_note = "User may be in crisis—escalate to emergency guidance."
-        if crisis_note not in notes:
-            notes.append(crisis_note)
+    if priority == "follow_up":
+        follow_note = "Marked for follow-up attention."
+        if follow_note not in notes:
+            notes.append(follow_note)
+    if priority == "escalate":
+        escalate_note = "Requires human review."
+        if escalate_note not in notes:
+            notes.append(escalate_note)
 
     if clarity == "vague":
         route = "clarify"
-    elif risk == "critical":
-        route = "safety"
+    elif priority == "escalate":
+        route = "escalate"
     else:
         route = "analysis"
 
@@ -117,7 +121,7 @@ def router(state: ChatbotState) -> dict[str, object]:
         "difficulty": difficulty,
         "clarity": clarity,
         "intent": intent,
-        "risk": risk,
+        "priority": priority,
     }
 
     if notes:
@@ -137,24 +141,25 @@ def _llm_reply_with_model(state: ChatbotState, system_instructions: str, model: 
 
 
 def analysis(state: ChatbotState) -> dict[str, object]:
-    intent = state.get("intent", "information")
+    intent = state.get("intent", "informational")
     difficulty = state.get("difficulty", "medium")
     notes = list(state.get("notes", []))
 
-    if state.get("risk") == "watch":
-        monitor_note = "Observe tone for distress; include grounding or support resources."
-        if monitor_note not in notes:
-            notes.append(monitor_note)
+    priority = state.get("priority", "normal")
+    if priority == "follow_up":
+        follow_note = "Track for follow-up context."
+        if follow_note not in notes:
+            notes.append(follow_note)
 
-    if intent == "emotional_support":
-        route = "support_response"
-        rationale = f"Routing to emotional support with difficulty={difficulty}."
+    if intent == "creative":
+        route = "followup_response"
+        rationale = f"Routing to follow-up flow; difficulty={difficulty}."
     elif intent == "problem_solving":
-        route = "coaching_entry"
-        rationale = f"Routing to structured coaching with difficulty={difficulty}."
+        route = "solution_entry"
+        rationale = f"Routing to solution flow; difficulty={difficulty}."
     else:
-        route = "evidence_entry"
-        rationale = f"Routing to evidence synthesis with difficulty={difficulty}."
+        route = "analysis_entry"
+        rationale = f"Routing to analysis flow; difficulty={difficulty}."
 
     if rationale not in notes:
         notes.append(rationale)
@@ -165,59 +170,59 @@ def analysis(state: ChatbotState) -> dict[str, object]:
     return payload
 
 
-def support_response(state: ChatbotState) -> dict:
+def followup_response(state: ChatbotState) -> dict:
     notes = state.get("notes", [])
     hints = " ".join(notes[-2:]) if notes else ""
-    risk = state.get("risk", "none")
     instructions = (
-        "You are a licensed-psychologist-style support specialist. Offer empathic validation, summarize what you heard, and "
-        "recommend evidence-based coping skills (CBT, DBT, ACT) tailored to the user's emotions."
+        "You are a collaborative assistant. Acknowledge the user's goal, surface helpful context, "
+        "and suggest the most relevant next action."
     )
     if hints:
-        instructions += f" Triage notes: {hints}."
-    if risk == "watch":
-        instructions += " Include optional professional resources and normalize seeking help."
+        instructions += f" Internal notes to reflect: {hints}."
     update = _llm_reply_with_model(state, instructions, _llm_medium)
     update["route"] = "finalize"
     return update
 
 
-def coaching_entry(state: ChatbotState) -> dict[str, object]:
+def solution_entry(state: ChatbotState) -> dict[str, object]:
     difficulty = state.get("difficulty", "medium")
-    route = "coaching_plan" if difficulty == "high" else "coaching_direct"
+    route = "solution_plan" if difficulty == "high" else "solution_direct"
     return {"route": route}
 
 
-def coaching_direct(state: ChatbotState) -> dict:
+def solution_direct(state: ChatbotState) -> dict:
     difficulty = state.get("difficulty", "medium")
     model = _llm_low if difficulty == "low" else _llm_medium
     instructions = (
-        "You are a structured problem-solving coach. Deliver a short, actionable intervention grounded in CBT coaching tools, SMART goals, and habit design."
+        "You are an applied problem solver. Provide a concise, step-by-step answer, "
+        "call out key assumptions, and recommend a quick validation check."
     )
     if difficulty == "medium":
-        instructions += " Include 2-3 numbered steps and a reflection question."
+        instructions += " Include a short checklist for the user to follow."
     update = _llm_reply_with_model(state, instructions, model)
     update["route"] = "finalize"
     return update
 
 
-def coaching_plan(state: ChatbotState) -> dict:
+def solution_plan(state: ChatbotState) -> dict:
     update = _llm_reply_with_model(
         state,
         (
-            "You are an expert coach. Produce a staged plan (assessment, strategy, practice, follow-up) referencing validated frameworks like CBT, WOOP, or motivational interviewing."
+            "You are a senior strategist. Draft a staged plan "
+            "(assessment, strategy, execution, review) before producing the final solution."
         ),
         _llm_high,
     )
-    update["route"] = "coaching_synthesis"
+    update["route"] = "solution_synthesis"
     return update
 
 
-def coaching_synthesis(state: ChatbotState) -> dict:
+def solution_synthesis(state: ChatbotState) -> dict:
     update = _llm_reply_with_model(
         state,
         (
-            "You are an expert coach. Translate the approved plan into a compassionate guide, highlight success metrics, and cite the frameworks used."
+            "You are a senior strategist. Use the plan to produce the final answer, "
+            "reference each stage, and note potential risks or follow-up actions."
         ),
         _llm_high,
     )
@@ -225,42 +230,45 @@ def coaching_synthesis(state: ChatbotState) -> dict:
     return update
 
 
-def evidence_entry(state: ChatbotState) -> dict[str, object]:
+def analysis_entry(state: ChatbotState) -> dict[str, object]:
     difficulty = state.get("difficulty", "medium")
-    route = "evidence_plan" if difficulty == "high" else "evidence_brief"
+    route = "analysis_plan" if difficulty == "high" else "analysis_brief"
     return {"route": route}
 
 
-def evidence_brief(state: ChatbotState) -> dict:
+def analysis_brief(state: ChatbotState) -> dict:
     difficulty = state.get("difficulty", "medium")
     model = _llm_low if difficulty == "low" else _llm_medium
     instructions = (
-        "You are a science-grounded analyst. Provide a concise synthesis citing high-quality sources (systematic reviews, guidelines)."
+        "You are an analytical explainer. Summarize the core ideas, point to supporting context, "
+        "and mention practical examples."
     )
     if difficulty == "medium":
-        instructions += " Include a short methods note (e.g., study types, sample sizes)."
+        instructions += " Close with two follow-up questions the user could explore."
     update = _llm_reply_with_model(state, instructions, model)
     update["route"] = "finalize"
     return update
 
 
-def evidence_plan(state: ChatbotState) -> dict:
+def analysis_plan(state: ChatbotState) -> dict:
     update = _llm_reply_with_model(
         state,
         (
-            "You are a research strategist. Draft a bulleted plan detailing the evidence hierarchy, key comparison points, and evaluation criteria before composing the final answer."
+            "You are an analytical explainer. Outline a structured plan for a deeper dive "
+            "(sections, key questions, and evidence to gather) before drafting the final response."
         ),
         _llm_high,
     )
-    update["route"] = "evidence_synthesis"
+    update["route"] = "analysis_synthesis"
     return update
 
 
-def evidence_synthesis(state: ChatbotState) -> dict:
+def analysis_synthesis(state: ChatbotState) -> dict:
     update = _llm_reply_with_model(
         state,
         (
-            "You are a senior researcher. Execute the prior plan, organize the response with numbered sections, cite sources inline, and rate evidence strength."
+            "You are an analytical explainer. Follow the plan to deliver the final response, "
+            "organize it with numbered sections, and highlight open questions."
         ),
         _llm_high,
     )
@@ -268,10 +276,10 @@ def evidence_synthesis(state: ChatbotState) -> dict:
     return update
 
 
-def safety(state: ChatbotState) -> dict:
+def escalate(state: ChatbotState) -> dict:
     message = (
-        "I’m concerned you may be dealing with a crisis. I’m not equipped for emergency support. "
-        "Please contact local emergency services or a crisis hotline right away (e.g., 988 in the U.S., or your country’s emergency number)."
+        "This request needs a human to review it before the assistant can continue. "
+        "A reviewer will examine the conversation and follow up."
     )
     if state.get("notes"):
         message += " " + state["notes"][-1]
@@ -289,9 +297,9 @@ def clarify(state: ChatbotState) -> dict:
     hints = state.get("notes", [])
     reason = hints[-1] if hints else None
     message = (
-        "To give a precise, evidence-based answer I need a bit more context. " + reason
+        "I need a bit more detail to help. " + reason
         if reason
-        else "Could you clarify the specific outcome, population, or constraints you're working with?"
+        else "Could you clarify the outcome, constraints, or examples you have in mind?"
     )
     return {
         "messages": [
@@ -304,18 +312,17 @@ def clarify(state: ChatbotState) -> dict:
 
 
 def finalize(state: ChatbotState) -> dict:
-    risk = state.get("risk", "none")
+    priority = state.get("priority", "normal")
     notes = state.get("notes", [])
     triage_summary = " ".join(notes[-3:]) if notes else ""
     instructions = (
-        "You are a clinical-quality facilitator. Deliver the final response by consolidating prior guidance into clear next steps, "
-        "reinforcing evidence sources or frameworks mentioned, and setting expectations for follow-up."
+        "You are a synthesizer. Recap the key points delivered so far, "
+        "highlight recommended next steps, and mention any follow-up items."
     )
     if triage_summary:
         instructions += f" Internal notes to reflect: {triage_summary}."
-    if risk == "watch":
-        instructions += " Offer optional professional resources and encourage monitoring wellbeing."
-    instructions += " Close with a professional disclaimer that this is not a substitute for licensed care."
+    if priority == "follow_up":
+        instructions += " Emphasize the items flagged for follow-up."
     return _llm_reply_with_model(state, instructions, _llm_medium)
 
 
@@ -324,17 +331,17 @@ def build_app():
 
     graph.add_node("router", router)
     graph.add_node("clarify", clarify)
-    graph.add_node("safety", safety)
+    graph.add_node("escalate", escalate)
     graph.add_node("analysis", analysis)
-    graph.add_node("support_response", support_response)
-    graph.add_node("coaching_entry", coaching_entry)
-    graph.add_node("coaching_direct", coaching_direct)
-    graph.add_node("coaching_plan", coaching_plan)
-    graph.add_node("coaching_synthesis", coaching_synthesis)
-    graph.add_node("evidence_entry", evidence_entry)
-    graph.add_node("evidence_brief", evidence_brief)
-    graph.add_node("evidence_plan", evidence_plan)
-    graph.add_node("evidence_synthesis", evidence_synthesis)
+    graph.add_node("followup_response", followup_response)
+    graph.add_node("solution_entry", solution_entry)
+    graph.add_node("solution_direct", solution_direct)
+    graph.add_node("solution_plan", solution_plan)
+    graph.add_node("solution_synthesis", solution_synthesis)
+    graph.add_node("analysis_entry", analysis_entry)
+    graph.add_node("analysis_brief", analysis_brief)
+    graph.add_node("analysis_plan", analysis_plan)
+    graph.add_node("analysis_synthesis", analysis_synthesis)
     graph.add_node("finalize", finalize)
 
     graph.add_edge(START, "router")
@@ -347,7 +354,7 @@ def build_app():
         select_route,
         {
             "clarify": "clarify",
-            "safety": "safety",
+            "escalate": "escalate",
             "analysis": "analysis",
         },
     )
@@ -356,56 +363,48 @@ def build_app():
         "analysis",
         select_route,
         {
-            "support_response": "support_response",
-            "coaching_entry": "coaching_entry",
-            "evidence_entry": "evidence_entry",
+            "followup_response": "followup_response",
+            "solution_entry": "solution_entry",
+            "analysis_entry": "analysis_entry",
         },
     )
 
     graph.add_conditional_edges(
-        "coaching_entry",
+        "solution_entry",
         select_route,
         {
-            "coaching_direct": "coaching_direct",
-            "coaching_plan": "coaching_plan",
+            "solution_direct": "solution_direct",
+            "solution_plan": "solution_plan",
         },
     )
 
     graph.add_conditional_edges(
-        "coaching_plan",
+        "solution_plan",
         select_route,
         {
-            "coaching_synthesis": "coaching_synthesis",
+            "solution_synthesis": "solution_synthesis",
         },
     )
 
     graph.add_conditional_edges(
-        "evidence_entry",
+        "analysis_entry",
         select_route,
         {
-            "evidence_brief": "evidence_brief",
-            "evidence_plan": "evidence_plan",
+            "analysis_brief": "analysis_brief",
+            "analysis_plan": "analysis_plan",
         },
     )
 
     graph.add_conditional_edges(
-        "evidence_plan",
+        "analysis_plan",
         select_route,
         {
-            "evidence_synthesis": "evidence_synthesis",
+            "analysis_synthesis": "analysis_synthesis",
         },
     )
 
     graph.add_conditional_edges(
-        "support_response",
-        select_route,
-        {
-            "finalize": "finalize",
-        },
-    )
-
-    graph.add_conditional_edges(
-        "coaching_direct",
+        "followup_response",
         select_route,
         {
             "finalize": "finalize",
@@ -413,7 +412,7 @@ def build_app():
     )
 
     graph.add_conditional_edges(
-        "coaching_synthesis",
+        "solution_direct",
         select_route,
         {
             "finalize": "finalize",
@@ -421,7 +420,7 @@ def build_app():
     )
 
     graph.add_conditional_edges(
-        "evidence_brief",
+        "solution_synthesis",
         select_route,
         {
             "finalize": "finalize",
@@ -429,7 +428,15 @@ def build_app():
     )
 
     graph.add_conditional_edges(
-        "evidence_synthesis",
+        "analysis_brief",
+        select_route,
+        {
+            "finalize": "finalize",
+        },
+    )
+
+    graph.add_conditional_edges(
+        "analysis_synthesis",
         select_route,
         {
             "finalize": "finalize",
@@ -437,7 +444,7 @@ def build_app():
     )
 
     graph.add_edge("clarify", END)
-    graph.add_edge("safety", END)
+    graph.add_edge("escalate", END)
     graph.add_edge("finalize", END)
 
     memory = MemorySaver()
