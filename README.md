@@ -1,5 +1,9 @@
 ## Mellow Router
 
+![Status: Beta](https://img.shields.io/badge/status-beta-orange)
+![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)
+![Dependencies: uv](https://img.shields.io/badge/deps-managed%20with%20uv-5C4EE5)
+
 Layered routing assistant that triages each request, chooses a specialty workflow, and keeps a running memory of the conversation.
 
 ### Setup
