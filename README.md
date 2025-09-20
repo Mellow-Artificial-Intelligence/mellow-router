@@ -58,15 +58,6 @@ uv run python main.py --save-graph graph.png --graph-theme dark
 - **Finalizer** consolidates prior responses, reinforces next steps, and highlights any follow-up flags.
 - **Memory** relies on a checkpoint store so each `thread` ID keeps its own history.
 
-### Using the router to build a fine-tuning dataset
-
-1. **Log triage metadata** – instrument `router` to capture the structured output (`difficulty`, `clarity`, `intent`, `priority`) alongside the incoming user message.
-2. **Capture target node** – record the node that ultimately responds (e.g., `analysis_brief`, `solution_synthesis`) and the model ID associated with it.
-3. **Collect examples** – run representative prompts through `main.py` (or call `build_app()` inside your own harness) and store tuples of `(input_message, triage_metadata, chosen_node/model)`.
-4. **Fine-tune your classifier** – train a lightweight model on the synthetic dataset to map raw user inputs to the desired routing outputs. The current prompt-driven classifier gives you synthetic labels to bootstrap that process.
-
-In production, swap the prompt-based triage step with your trained classifier while keeping the downstream node graph unchanged.
-
 ### Tests
 
 ```bash
